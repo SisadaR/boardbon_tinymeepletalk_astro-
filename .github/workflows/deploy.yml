@@ -1,0 +1,77 @@
+# .github/workflows/deploy.yml
+name: Deploy Astro Site
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Build Astro site
+      run: npm run build
+      
+    - name: Create deployment artifact
+      run: |
+        tar -czf build.tar.gz -C dist .
+        
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: astro-build
+        path: build.tar.gz
+        retention-days: 30
+        
+    # Option 1: Deploy via SSH to your server
+    - name: Deploy to server via SSH
+      if: github.ref == 'refs/heads/main'
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.HOST }}
+        username: ${{ secrets.USERNAME }}
+        key: ${{ secrets.SSH_KEY }}
+        port: ${{ secrets.PORT || 22 }}
+        script: |
+          # Navigate to deployment directory
+          cd /var/www/boardbon.tinymeepletalk.com  # Adjust this path
+          
+          # Download the artifact
+          curl -H "Authorization: token ${{ secrets.PERSONAL_TOKEN_GITHUB }}" \
+               -H "Accept: application/vnd.github.v3+json" \
+               -L -o build.tar.gz \
+               "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$(curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${{ github.repository }}/actions/artifacts" | jq -r '.artifacts[] | select(.name=="astro-build") | .archive_download_url')"
+          
+          # Backup current site
+          if [ -d "current" ]; then
+            rm -rf backup
+            mv current backup
+          fi
+          
+          # Extract new build
+          mkdir -p current
+          tar -xzf build.tar.gz -C current
+          
+          # Clean up
+          rm build.tar.gz
+          
+          echo "✅ Deployment completed successfully!"
+          
+    # Remove the other deployment options since we're using SSH
+    # Option 2: Alternative - Upload to server via SCP (DISABLED)
+    # Option 3: Use rsync for deployment (DISABLED)
